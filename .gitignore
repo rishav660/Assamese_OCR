@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+checkpoints/
+data/train_real_sentences/
+data/val_real_sentences/
+data/test_real_sentences/
+outputs/

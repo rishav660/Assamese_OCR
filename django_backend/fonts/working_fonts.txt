@@ -1,0 +1,3 @@
+fonts/NotoSansBengali-Regular.ttf
+fonts/NotoSansBengali-Bold.ttf
+fonts/NotoSerifBengali-Regular.ttf
