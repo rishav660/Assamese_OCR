@@ -104,15 +104,6 @@ class AssameseOCRDataset(Dataset):
             print(f"[ERROR] Invalid image: {img_path}")
             return None, None
 
-        # Resize all images to fixed size (e.g., 32x320)
-        FIXED_HEIGHT = 32
-        FIXED_WIDTH = 320
-        if isinstance(image, torch.Tensor):
-            # Convert tensor to PIL for resizing
-            image = transforms.ToPILImage()(image)
-        image = image.resize((FIXED_WIDTH, FIXED_HEIGHT), Image.BILINEAR)
-        image = transforms.ToTensor()(image)
-
         if torch.isnan(image).any() or torch.isinf(image).any():
             print(f"[ERROR] Invalid image tensor: {img_path}")
             return None, None
