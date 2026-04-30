@@ -12,6 +12,7 @@ from torchvision import transforms
 from char_map import char_to_idx, idx_to_char
 from model import CRNN
 from post_processing import correct_sentence
+from metrics import compute_cer, compute_wer
 
 
 def parse_args():
@@ -33,6 +34,12 @@ def parse_args():
         "--disable-post-process",
         action="store_true",
         help="Skip spell correction post-processing",
+    )
+    parser.add_argument(
+        "--ground-truth",
+        type=str,
+        default=None,
+        help="Ground-truth text (or path to a .txt file) for CER/WER evaluation",
     )
     return parser.parse_args()
 
@@ -106,8 +113,26 @@ def main():
         width=args.width,
         use_post_process=not args.disable_post_process,
     )
-    print(text)
+    print(f"Prediction: {text}")
+
+    # Evaluate against ground truth if provided
+    if args.ground_truth:
+        gt = args.ground_truth
+        # If it looks like a file path, read from it
+        if gt.endswith(".txt") and os.path.isfile(gt):
+            with open(gt, "r", encoding="utf-8") as f:
+                gt = f.read().strip()
+
+        cer = compute_cer([text], [gt])
+        wer = compute_wer([text], [gt])
+        exact = "✅ EXACT MATCH" if text == gt else "❌ Not exact"
+
+        print(f"Ground Truth: {gt}")
+        print(f"CER: {cer:.4f} ({cer * 100:.2f}%)")
+        print(f"WER: {wer:.4f} ({wer * 100:.2f}%)")
+        print(exact)
 
 
 if __name__ == "__main__":
+    import os
     main()

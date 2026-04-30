@@ -21,14 +21,63 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
-from char_map import char_to_idx
+from char_map import char_to_idx, idx_to_char
 from data_augmentation import get_training_transforms, get_validation_transforms
 from dataset import AssameseOCRDataset, collate_fn
+from metrics import OCRMetrics
 from model import CRNN
 
 
 def default_num_workers():
     return 2 if os.name == "nt" else 4
+
+
+def decode_ctc_greedy(log_probs, input_lengths, labels, target_lengths):
+    """
+    Decode CTC outputs with greedy search and reconstruct target strings.
+
+    Args:
+        log_probs:      (T, B, C) log-softmax output from the model
+        input_lengths:  (B,) tensor of sequence lengths
+        labels:         (sum(target_lengths),) flattened target indices
+        target_lengths: (B,) tensor of target lengths per sample
+
+    Returns:
+        predictions: list[str] — decoded predictions
+        targets:     list[str] — ground-truth strings
+    """
+    blank_idx = len(char_to_idx)
+    batch_size = log_probs.size(1)
+
+    # --- decode predictions ---
+    preds = log_probs.permute(1, 0, 2).cpu()       # (B, T, C)
+    preds = torch.argmax(preds, dim=2)              # (B, T)
+
+    predictions = []
+    for i in range(batch_size):
+        seq = preds[i][: input_lengths[i]]
+        prev = -1
+        chars = []
+        for idx in seq:
+            idx = idx.item()
+            if idx != prev and idx != blank_idx:
+                ch = idx_to_char.get(idx, "")
+                if ch:
+                    chars.append(ch)
+            prev = idx
+        predictions.append("".join(chars))
+
+    # --- reconstruct targets ---
+    targets = []
+    offset = 0
+    for i in range(batch_size):
+        length = target_lengths[i].item()
+        indices = labels[offset : offset + length].cpu().tolist()
+        target_str = "".join(idx_to_char.get(idx, "") for idx in indices)
+        targets.append(target_str)
+        offset += length
+
+    return predictions, targets
 
 
 def parse_args():
@@ -249,8 +298,11 @@ def train(args):
         print(f"Labels contain spaces: {space_idx > 0 and space_idx in labels}")
 
     best_val_loss = float("inf")
+    best_cer = float("inf")
     train_losses = []
     val_losses = []
+    val_cers = []
+    val_wers = []
     no_improve_epochs = 0
 
     ensure_parent_dir(args.best_checkpoint)
@@ -308,6 +360,7 @@ def train(args):
         model.eval()
         val_loss = 0.0
         val_batch_count = 0
+        val_metrics = OCRMetrics()
 
         with torch.no_grad():
             for batch in val_loader:
@@ -327,8 +380,16 @@ def train(args):
                 val_loss += loss.item()
                 val_batch_count += 1
 
+                # Decode predictions and compute CER / WER
+                predictions, targets = decode_ctc_greedy(
+                    outputs, input_lengths, labels, target_lengths
+                )
+                val_metrics.update(predictions, targets)
+
         avg_val_loss = val_loss / val_batch_count if val_batch_count > 0 else 0.0
         val_losses.append(avg_val_loss)
+        val_cers.append(val_metrics.cer)
+        val_wers.append(val_metrics.wer)
         epoch_time = time.time() - epoch_start
 
         print(f"\n{'=' * 60}")
@@ -337,10 +398,12 @@ def train(args):
             f"({epoch_time / 60:.1f} min)"
         )
         print(f"Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
+        print(f"Val {val_metrics.summary()}")
         print(f"Learning Rate: {optimizer.param_groups[0]['lr']:.6f}")
 
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
+            best_cer = val_metrics.cer
             torch.save(model.state_dict(), args.best_checkpoint)
             print(f"Best model saved to: {args.best_checkpoint}")
             no_improve_epochs = 0
@@ -358,19 +421,35 @@ def train(args):
 
     torch.save(model.state_dict(), args.final_checkpoint)
 
-    plt.figure(figsize=(10, 5))
-    plt.plot(train_losses, label="Training Loss")
-    plt.plot(val_losses, label="Validation Loss")
-    plt.xlabel("Epochs")
-    plt.ylabel("Loss")
-    plt.legend()
-    plt.title("Sentence Model Training")
-    plt.savefig(args.plot_out)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 5))
+
+    # Loss plot
+    ax1.plot(train_losses, label="Training Loss")
+    ax1.plot(val_losses, label="Validation Loss")
+    ax1.set_xlabel("Epochs")
+    ax1.set_ylabel("Loss")
+    ax1.legend()
+    ax1.set_title("Loss")
+
+    # CER / WER plot
+    ax2.plot(val_cers, label="CER", marker="o", markersize=3)
+    ax2.plot(val_wers, label="WER", marker="s", markersize=3)
+    ax2.set_xlabel("Epochs")
+    ax2.set_ylabel("Error Rate")
+    ax2.legend()
+    ax2.set_title("Character & Word Error Rate")
+
+    fig.suptitle("Sentence Model Training", fontsize=14)
+    fig.tight_layout()
+    fig.savefig(args.plot_out)
 
     print("\n" + "=" * 60)
     print("Training complete")
     print("=" * 60)
     print(f"Best validation loss: {best_val_loss:.4f}")
+    print(f"Best CER at that point: {best_cer:.4f} ({best_cer * 100:.2f}%)")
+    print(f"Final CER: {val_cers[-1]:.4f} ({val_cers[-1] * 100:.2f}%)" if val_cers else "")
+    print(f"Final WER: {val_wers[-1]:.4f} ({val_wers[-1] * 100:.2f}%)" if val_wers else "")
     print(f"Best checkpoint: {args.best_checkpoint}")
     print(f"Final checkpoint: {args.final_checkpoint}")
     print(f"Loss plot: {args.plot_out}")

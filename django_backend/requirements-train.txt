@@ -5,4 +5,5 @@ Pillow
 opencv-python-headless
 matplotlib
 tqdm
+editdistance
 requests
