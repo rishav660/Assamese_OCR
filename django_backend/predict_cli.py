@@ -13,6 +13,7 @@ from char_map import char_to_idx, idx_to_char
 from model import CRNN
 from post_processing import correct_sentence
 from metrics import compute_cer, compute_wer
+from beam_search import ctc_beam_search
 
 
 def parse_args():
@@ -34,6 +35,12 @@ def parse_args():
         "--disable-post-process",
         action="store_true",
         help="Skip spell correction post-processing",
+    )
+    parser.add_argument(
+        "--beam-width",
+        type=int,
+        default=1,
+        help="Beam width for CTC decoding (1 = greedy, >1 = beam search)",
     )
     parser.add_argument(
         "--ground-truth",
@@ -70,7 +77,8 @@ def load_model(checkpoint_path, device):
     return model
 
 
-def predict(image_path, checkpoint_path, width=512, use_post_process=True):
+def predict(image_path, checkpoint_path, width=512, use_post_process=True,
+            beam_width=1):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = load_model(checkpoint_path, device)
 
@@ -89,17 +97,28 @@ def predict(image_path, checkpoint_path, width=512, use_post_process=True):
     pil_image = PILImage.fromarray(image)
     image_tensor = transform(pil_image).unsqueeze(0).to(device)
 
+    blank_idx = len(char_to_idx)
+
     with torch.no_grad():
         outputs = model(image_tensor)
         outputs = torch.log_softmax(outputs, 2)
-        pred_sizes = torch.full(
-            size=(outputs.size(1),),
-            fill_value=outputs.size(0),
-            dtype=torch.int32,
-        )
-        decoded = decode_prediction(outputs, pred_sizes)
 
-    text = decoded[0]
+        if beam_width > 1:
+            # Beam search decode
+            text = ctc_beam_search(
+                outputs[:, 0, :].cpu(), idx_to_char, blank_idx,
+                beam_width=beam_width,
+            )
+        else:
+            # Greedy decode
+            pred_sizes = torch.full(
+                size=(outputs.size(1),),
+                fill_value=outputs.size(0),
+                dtype=torch.int32,
+            )
+            decoded = decode_prediction(outputs, pred_sizes)
+            text = decoded[0]
+
     if use_post_process:
         text = correct_sentence(text)
     return text
@@ -112,7 +131,10 @@ def main():
         checkpoint_path=args.checkpoint,
         width=args.width,
         use_post_process=not args.disable_post_process,
+        beam_width=args.beam_width,
     )
+    decode_method = f"beam search (width={args.beam_width})" if args.beam_width > 1 else "greedy"
+    print(f"Decode: {decode_method}")
     print(f"Prediction: {text}")
 
     # Evaluate against ground truth if provided

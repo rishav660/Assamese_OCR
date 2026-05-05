@@ -36,6 +36,7 @@ from char_map import char_to_idx, idx_to_char
 from metrics import compute_cer, compute_wer, compute_exact_match, OCRMetrics
 from model import CRNN
 from post_processing import correct_sentence
+from beam_search import ctc_beam_search
 
 
 def parse_args():
@@ -70,6 +71,12 @@ def parse_args():
         "--post-process",
         action="store_true",
         help="Apply spell-check post-processing",
+    )
+    parser.add_argument(
+        "--beam-width",
+        type=int,
+        default=1,
+        help="Beam width for CTC decoding (1 = greedy, >1 = beam search)",
     )
     parser.add_argument(
         "--num-samples",
@@ -161,8 +168,12 @@ def evaluate(args):
     ])
 
     # Run inference
+    decode_method = f"beam search (width={args.beam_width})" if args.beam_width > 1 else "greedy"
     print(f"\nEvaluating {len(matched)} images...")
+    print(f"Decode: {decode_method}")
     print(f"Post-processing: {'ON' if args.post_process else 'OFF'}\n")
+
+    blank_idx = len(char_to_idx)
 
     metrics = OCRMetrics()
     all_predictions = []
@@ -189,7 +200,13 @@ def evaluate(args):
             outputs = model(tensor)
             outputs = torch.log_softmax(outputs, 2)
 
-        prediction = decode_single(outputs[:, 0, :])  # (T, C)
+        if args.beam_width > 1:
+            prediction = ctc_beam_search(
+                outputs[:, 0, :].cpu(), idx_to_char, blank_idx,
+                beam_width=args.beam_width,
+            )
+        else:
+            prediction = decode_single(outputs[:, 0, :])  # greedy
 
         if args.post_process:
             prediction = correct_sentence(prediction)
@@ -214,6 +231,7 @@ def evaluate(args):
     print("=" * 70)
     print(f"Checkpoint : {args.checkpoint}")
     print(f"Dataset    : {args.img_dir} ({len(matched)} samples)")
+    print(f"Decode     : {decode_method}")
     print(f"Post-proc  : {'ON' if args.post_process else 'OFF'}")
     print(f"Time       : {elapsed:.1f}s ({len(matched) / elapsed:.1f} img/s)")
     print("-" * 70)

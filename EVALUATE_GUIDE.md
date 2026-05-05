@@ -44,6 +44,20 @@ After your existing setup cells (mounting Drive, cloning repo, linking symlinks)
 
 ---
 
+### Cell 3.5: Evaluate WITH CTC Beam Search (Better Accuracy)
+
+```python
+# Use beam search decoding instead of greedy decoding
+!python evaluate.py \
+    --img-dir data/val_real_sentences/images \
+    --label-file data/val_real_sentences/labels/labels.txt \
+    --checkpoint checkpoints/best_model_sentences.pth \
+    --beam-width 10 \
+    --num-samples 10
+```
+
+---
+
 ### Cell 4: Evaluate on Test Set
 
 ```python
