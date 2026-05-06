@@ -77,6 +77,40 @@ def collect_sentences(input_file, min_length, max_length):
     return sentences, stats
 
 
+import multiprocessing
+from functools import partial
+
+def _process_single_sentence(args):
+    offset, sentence, output_dir_str, start_index, font_paths, font_size, img_height, padding = args
+    from pathlib import Path
+    from generate_real_sentence_data import RealSentenceGenerator
+    
+    # We create a lightweight generator just for rendering (no file I/O overhead)
+    # The font path list is passed so it can randomly choose
+    generator = RealSentenceGenerator(
+        input_file="", output_dir="", font_path=None, 
+        font_size=font_size, img_height=img_height, padding=padding, use_multiple_fonts=False
+    )
+    # Override font paths for random selection
+    generator.font_paths = font_paths
+    
+    output_path = Path(output_dir_str)
+    image_dir = output_path / "images"
+    label_dir = output_path / "labels"
+    
+    file_index = start_index + offset
+    image_name = f"sentence_{file_index:06d}.png"
+    image_path = image_dir / image_name
+
+    image = generator.render_sentence_image(sentence)
+    image.save(image_path)
+
+    label_file = label_dir / f"sentence_{file_index:06d}.txt"
+    with open(label_file, "w", encoding="utf-8") as text_handle:
+        text_handle.write(sentence)
+        
+    return f"{image_name}\t{sentence}\n"
+
 def write_split(sentences, output_dir, generator, start_index=0):
     output_path = Path(output_dir)
     image_dir = output_path / "images"
@@ -85,20 +119,23 @@ def write_split(sentences, output_dir, generator, start_index=0):
     label_dir.mkdir(parents=True, exist_ok=True)
 
     manifest_path = label_dir / "labels.txt"
+    
+    # Prepare arguments for multiprocessing
+    total = len(sentences)
+    args_list = [
+        (i, sentence, str(output_dir), start_index, generator.font_paths, generator.font_size, generator.img_height, generator.padding) 
+        for i, sentence in enumerate(sentences)
+    ]
+    
+    print(f"  -> Generating {total} images using {multiprocessing.cpu_count()} CPU cores...")
+    
     with open(manifest_path, "w", encoding="utf-8") as manifest:
-        for offset, sentence in enumerate(sentences):
-            file_index = start_index + offset
-            image_name = f"sentence_{file_index:06d}.png"
-            image_path = image_dir / image_name
-
-            image = generator.render_sentence_image(sentence)
-            image.save(image_path)
-
-            label_file = label_dir / f"sentence_{file_index:06d}.txt"
-            with open(label_file, "w", encoding="utf-8") as text_handle:
-                text_handle.write(sentence)
-
-            manifest.write(f"{image_name}\t{sentence}\n")
+        # Use multiprocessing pool
+        with multiprocessing.Pool() as pool:
+            for i, result_line in enumerate(pool.imap_unordered(_process_single_sentence, args_list)):
+                manifest.write(result_line)
+                if (i + 1) % 1000 == 0 or (i + 1) == total:
+                    print(f"     Progress: {i + 1} / {total} ({(i + 1)/total*100:.1f}%)")
 
     return manifest_path
 
