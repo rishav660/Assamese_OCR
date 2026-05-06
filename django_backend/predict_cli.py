@@ -43,6 +43,12 @@ def parse_args():
         help="Beam width for CTC decoding (1 = greedy, >1 = beam search)",
     )
     parser.add_argument(
+        "--lm-path",
+        type=str,
+        default=None,
+        help="Path to KenLM language model",
+    )
+    parser.add_argument(
         "--ground-truth",
         type=str,
         default=None,
@@ -78,9 +84,23 @@ def load_model(checkpoint_path, device):
 
 
 def predict(image_path, checkpoint_path, width=512, use_post_process=True,
-            beam_width=1):
+            beam_width=1, lm_path=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = load_model(checkpoint_path, device)
+
+    lm_decoder = None
+    if lm_path:
+        try:
+            from pyctcdecode import build_ctcdecoder
+            vocab = [""] + [idx_to_char[i] for i in range(1, len(char_to_idx) + 1)]
+            lm_decoder = build_ctcdecoder(
+                labels=vocab,
+                kenlm_model_path=lm_path,
+                alpha=0.5,
+                beta=1.0,
+            )
+        except ImportError:
+            print("[WARNING] pyctcdecode not installed, ignoring LM path")
 
     from data_augmentation import AspectRatioResize
     transform = transforms.Compose(
@@ -104,21 +124,24 @@ def predict(image_path, checkpoint_path, width=512, use_post_process=True,
         outputs = model(image_tensor)
         outputs = torch.log_softmax(outputs, 2)
 
-        if beam_width > 1:
-            # Beam search decode
-            text = ctc_beam_search(
-                outputs[:, 0, :].cpu(), idx_to_char, blank_idx,
-                beam_width=beam_width,
-            )
-        else:
-            # Greedy decode
-            pred_sizes = torch.full(
-                size=(outputs.size(1),),
-                fill_value=outputs.size(0),
-                dtype=torch.int32,
-            )
-            decoded = decode_prediction(outputs, pred_sizes)
-            text = decoded[0]
+    if lm_decoder is not None:
+        logits = outputs[0].cpu().numpy()
+        text = lm_decoder.decode(logits, beam_width=beam_width)
+    elif beam_width > 1:
+        # Beam search decode
+        text = ctc_beam_search(
+            outputs[:, 0, :].cpu(), idx_to_char, blank_idx,
+            beam_width=beam_width,
+        )
+    else:
+        # Greedy decode
+        pred_sizes = torch.full(
+            size=(outputs.size(1),),
+            fill_value=outputs.size(0),
+            dtype=torch.int32,
+        )
+        decoded = decode_prediction(outputs, pred_sizes)
+        text = decoded[0]
 
     if use_post_process:
         text = correct_sentence(text)
@@ -133,8 +156,12 @@ def main():
         width=args.width,
         use_post_process=not args.disable_post_process,
         beam_width=args.beam_width,
+        lm_path=args.lm_path,
     )
-    decode_method = f"beam search (width={args.beam_width})" if args.beam_width > 1 else "greedy"
+    if args.lm_path:
+        decode_method = f"pyctcdecode LM (beam={args.beam_width})"
+    else:
+        decode_method = f"beam search (width={args.beam_width})" if args.beam_width > 1 else "greedy"
     print(f"Decode: {decode_method}")
     print(f"Prediction: {text}")
 

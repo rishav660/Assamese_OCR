@@ -79,6 +79,12 @@ def parse_args():
         help="Beam width for CTC decoding (1 = greedy, >1 = beam search)",
     )
     parser.add_argument(
+        "--lm-path",
+        type=str,
+        default=None,
+        help="Path to KenLM .bin or .arpa file for N-gram Language Model decoding",
+    )
+    parser.add_argument(
         "--num-samples",
         type=int,
         default=10,
@@ -168,7 +174,29 @@ def evaluate(args):
     ])
 
     # Run inference
-    decode_method = f"beam search (width={args.beam_width})" if args.beam_width > 1 else "greedy"
+    lm_decoder = None
+    if args.lm_path:
+        try:
+            from pyctcdecode import build_ctcdecoder
+            # pyctcdecode requires labels to be listed matching the logits order.
+            # Usually index 0 is blank (or whatever you use). Since our blank is index 0.
+            # The length of char_to_idx is the number of real characters.
+            vocab = [""] + [idx_to_char[i] for i in range(1, len(char_to_idx) + 1)]
+            
+            print(f"Loading KenLM model from {args.lm_path}...")
+            lm_decoder = build_ctcdecoder(
+                labels=vocab,
+                kenlm_model_path=args.lm_path,
+                alpha=0.5,
+                beta=1.0,
+            )
+            decode_method = f"pyctcdecode LM (beam={args.beam_width})"
+        except ImportError:
+            print("[ERROR] pyctcdecode not installed! Run: pip install pyctcdecode")
+            return
+    else:
+        decode_method = f"beam search (width={args.beam_width})" if args.beam_width > 1 else "greedy"
+
     print(f"\nEvaluating {len(matched)} images...")
     print(f"Decode: {decode_method}")
     print(f"Post-processing: {'ON' if args.post_process else 'OFF'}\n")
@@ -200,7 +228,11 @@ def evaluate(args):
             outputs = model(tensor)
             outputs = torch.log_softmax(outputs, 2)
 
-        if args.beam_width > 1:
+        if lm_decoder is not None:
+            # pyctcdecode expects (T, C) numpy array of logits or log-probabilities
+            logits = outputs[0].cpu().numpy()  # Extract the single sequence from batch
+            prediction = lm_decoder.decode(logits, beam_width=args.beam_width)
+        elif args.beam_width > 1:
             prediction = ctc_beam_search(
                 outputs[:, 0, :].cpu(), idx_to_char, blank_idx,
                 beam_width=args.beam_width,

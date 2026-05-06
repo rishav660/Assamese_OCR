@@ -1,7 +1,7 @@
-"""
+""" 
 Data Augmentation for OCR Training
 Adds variations to make model robust to different fonts, styles, and image conditions
-"""
+""" 
 import random
 import numpy as np
 import io
