@@ -25,7 +25,7 @@ from char_map import char_to_idx, idx_to_char
 from data_augmentation import get_training_transforms, get_validation_transforms
 from dataset import AssameseOCRDataset, collate_fn
 from metrics import OCRMetrics
-from model import CRNN
+from model import AssameseOCR
 
 
 def default_num_workers():
@@ -259,7 +259,7 @@ def train(args):
     print(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")
 
     num_classes = len(char_to_idx) + 1
-    model = CRNN(img_height=32, nn_classes=num_classes).to(device)
+    model = AssameseOCR(img_height=64, nn_classes=num_classes).to(device)
 
     optimizer = optim.AdamW(
         model.parameters(),

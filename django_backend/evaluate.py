@@ -34,7 +34,7 @@ from torchvision import transforms
 
 from char_map import char_to_idx, idx_to_char
 from metrics import compute_cer, compute_wer, compute_exact_match, OCRMetrics
-from model import CRNN
+from model import AssameseOCR
 from post_processing import correct_sentence
 from beam_search import ctc_beam_search
 
@@ -111,8 +111,7 @@ def load_labels(label_file):
 
 
 def load_model(checkpoint_path, device):
-    num_classes = len(char_to_idx) + 1
-    model = CRNN(img_height=32, nn_classes=num_classes)
+    model = AssameseOCR(img_height=64, nn_classes=len(char_to_idx) + 1)
     model.load_state_dict(torch.load(checkpoint_path, map_location=device))
     model.to(device)
     model.eval()
@@ -160,9 +159,10 @@ def evaluate(args):
         print("[ERROR] No image-label matches found. Check paths and filenames.")
         return
 
+    from data_augmentation import AspectRatioResize
     # Transform
     transform = transforms.Compose([
-        transforms.Resize((32, args.width)),
+        AspectRatioResize(target_height=64, max_width=2048),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.5], std=[0.5]),
     ])

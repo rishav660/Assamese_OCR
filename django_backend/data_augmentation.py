@@ -4,8 +4,28 @@ Adds variations to make model robust to different fonts, styles, and image condi
 """
 import random
 import numpy as np
-from PIL import Image, ImageEnhance, ImageFilter, ImageFont, ImageDraw
+import io
+from PIL import Image, ImageEnhance, ImageFilter, ImageFont, ImageDraw, ImageOps
 import torchvision.transforms as transforms
+
+class AspectRatioResize:
+    """
+    Resizes image dynamically keeping aspect ratio, with a fixed height.
+    Ensures the width is divisible by 4 to cleanly pass through the CNN.
+    """
+    def __init__(self, target_height=64, max_width=1024):
+        self.target_height = target_height
+        self.max_width = max_width
+
+    def __call__(self, img):
+        w, h = img.size
+        new_w = max(4, int(w * (self.target_height / h)))
+        if new_w > self.max_width:
+            new_w = self.max_width
+            
+        # Ensure new_w is divisible by 4 for exact sequence length calculation
+        new_w = max(4, (new_w // 4) * 4)
+        return img.resize((new_w, self.target_height), Image.BILINEAR)
 
 class OCRAugmentation:
     """
@@ -76,15 +96,45 @@ class OCRAugmentation:
                 # Dilation (bolder text)
                 img = img.filter(ImageFilter.MaxFilter(3))
         
+        # 8. Perspective transform (simulates camera angle)
+        if random.random() < self.p * 0.3:
+            width, height = img.size
+            coeffs = [1 + random.uniform(-0.05, 0.05) for _ in range(8)]
+            img = img.transform((width, height), Image.PERSPECTIVE, coeffs)
+
+        # 9. Random padding/cropping (simulates imperfect bounding boxes)
+        if random.random() < self.p * 0.4:
+            pad_top = random.randint(0, 5)
+            pad_bottom = random.randint(0, 5)
+            pad_left = random.randint(0, 10)
+            pad_right = random.randint(0, 10)
+            img = ImageOps.expand(img, (pad_left, pad_top, pad_right, pad_bottom), fill=255)
+
+        # 10. JPEG compression artifacts (simulates real-world images)
+        if random.random() < self.p * 0.3:
+            buffer = io.BytesIO()
+            img.save(buffer, format='JPEG', quality=random.randint(40, 85))
+            buffer.seek(0)
+            img = Image.open(buffer).convert('L')
+
+        # 11. Random line/scratch artifacts
+        if random.random() < self.p * 0.1:
+            draw = ImageDraw.Draw(img)
+            x1 = random.randint(0, img.width)
+            y1 = random.randint(0, img.height)
+            x2 = random.randint(0, img.width)
+            draw.line([(x1, y1), (x2, y1 + random.randint(-3, 3))], fill=128, width=1)
+
         return img
 
 
-def get_training_transforms(augment=True):
+def get_training_transforms(augment=True, max_width=1024):
     """
     Get training transforms with optional augmentation
     
     Args:
         augment: Whether to apply data augmentation
+        max_width: Maximum allowed width for dynamic resizing
         
     Returns:
         torchvision.transforms.Compose
@@ -95,9 +145,9 @@ def get_training_transforms(augment=True):
         # Add custom OCR augmentation first
         transform_list.append(OCRAugmentation(p=0.5))
     
-    # Standard transforms
+    # Standard transforms (dynamic width)
     transform_list.extend([
-        transforms.Resize((32, 512)),
+        AspectRatioResize(target_height=64, max_width=max_width),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.5], std=[0.5])
     ])
@@ -105,7 +155,7 @@ def get_training_transforms(augment=True):
     return transforms.Compose(transform_list)
 
 
-def get_validation_transforms():
+def get_validation_transforms(max_width=1024):
     """
     Get validation transforms (no augmentation)
     
@@ -113,7 +163,7 @@ def get_validation_transforms():
         torchvision.transforms.Compose
     """
     return transforms.Compose([
-        transforms.Resize((32, 512)),
+        AspectRatioResize(target_height=64, max_width=max_width),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.5], std=[0.5])
     ])

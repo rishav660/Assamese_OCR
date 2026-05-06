@@ -120,21 +120,32 @@ class AssameseOCRDataset(Dataset):
 
         return image, torch.tensor(label_encoded, dtype=torch.long)
 
-# Correct collate_fn (NO label padding)
 def collate_fn(batch):
     batch = [b for b in batch if b is not None and len(b[1]) > 0]
     if len(batch) == 0:
         return None, None, None, None
 
     images, labels = zip(*batch)
-    images = torch.stack(images)
+    
+    # Pad images to max width in this batch
+    max_w = max(img.shape[2] for img in images)
+    
+    padded_images = []
+    for img in images:
+        c, h, w = img.shape
+        pad_w = max_w - w
+        # Pad on the right
+        padded_img = torch.nn.functional.pad(img, (0, pad_w, 0, 0), value=0)
+        padded_images.append(padded_img)
+        
+    images = torch.stack(padded_images)
 
     # Flatten labels
     flattened_labels = torch.cat(labels)
     target_lengths = torch.tensor([len(label) for label in labels], dtype=torch.long)
 
-    _, _, h, w = images.shape
-    seq_len = w // 4  
-    input_lengths = torch.full((len(images),), seq_len, dtype=torch.long)
+    # The CNN downsamples width by exactly 4. 
+    # Our AspectRatioResize ensures widths are divisible by 4, so this is exact.
+    input_lengths = torch.tensor([img.shape[2] // 4 for img in padded_images], dtype=torch.long)
 
     return images, flattened_labels, input_lengths, target_lengths

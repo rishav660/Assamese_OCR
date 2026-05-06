@@ -38,7 +38,7 @@ The training pipeline resizes to `32×320` in `dataset.py` L108-109, but inferen
 ```python
 # dataset.py — remove the hard-coded resize, let the transform handle it
 # Delete lines 107-114 and rely solely on the transform pipeline
-```
+``` 
 
 Also fix the double-transform issue: the transform already converts to tensor, then `__getitem__` converts back to PIL to resize again. This should be a single pipeline.
 

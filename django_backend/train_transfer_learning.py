@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from char_map import char_to_idx, idx_to_char
 from torchvision import transforms
 from dataset import AssameseOCRDataset, collate_fn
-from model_old import CRNN_OLD as CRNN
+from model import AssameseOCR
 import torch.optim as optim
 import torch.nn as nn
 import matplotlib.pyplot as plt
@@ -26,7 +26,7 @@ else:
 
 # Transforms - SAME width as base model (critical for transfer learning!)
 transform = transforms.Compose([
-    transforms.Resize((32, 512)),  # Keep same as base model
+    transforms.Resize((64, 512)),  # Keep same as base model
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.5], std=[0.5])
 ])
@@ -84,7 +84,11 @@ print(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")
 
 # ============ TRANSFER LEARNING: Load Pre-trained Model ============
 num_classes = len(char_to_idx) + 1
-model = CRNN(img_height=32, nn_classes=num_classes)
+model = AssameseOCR(img_height=64, nn_classes=num_classes).to(device)
+
+# Note: AssameseOCR uses ResNet+Transformer, so loading old CNN+LSTM 
+# weights will fail. Transfer learning from old architecture is deprecated.
+print("WARNING: Transfer learning from old architecture not supported with AssameseOCR")
 
 # Try to load pre-trained weights
 pretrained_path = "checkpoints/best_model_fast.pth"

@@ -1,3 +1,8 @@
 fonts/NotoSansBengali-Regular.ttf
 fonts/NotoSansBengali-Bold.ttf
 fonts/NotoSerifBengali-Regular.ttf
+fonts/HindSiliguri-Regular.ttf
+fonts/HindSiliguri-Bold.ttf
+fonts/Galada-Regular.ttf
+fonts/Mina-Regular.ttf
+fonts/TiroBangla-Regular.ttf

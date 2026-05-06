@@ -10,7 +10,7 @@ from PIL import Image as PILImage
 from torchvision import transforms
 
 from char_map import char_to_idx, idx_to_char
-from model import CRNN
+from model import AssameseOCR
 from post_processing import correct_sentence
 from metrics import compute_cer, compute_wer
 from beam_search import ctc_beam_search
@@ -70,7 +70,7 @@ def decode_prediction(preds, pred_sizes):
 
 
 def load_model(checkpoint_path, device):
-    model = CRNN(img_height=32, nn_classes=len(char_to_idx) + 1)
+    model = AssameseOCR(img_height=64, nn_classes=len(char_to_idx) + 1)
     model.load_state_dict(torch.load(checkpoint_path, map_location=device))
     model.to(device)
     model.eval()
@@ -82,9 +82,10 @@ def predict(image_path, checkpoint_path, width=512, use_post_process=True,
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = load_model(checkpoint_path, device)
 
+    from data_augmentation import AspectRatioResize
     transform = transforms.Compose(
         [
-            transforms.Resize((32, width)),
+            AspectRatioResize(target_height=64, max_width=2048),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.5], std=[0.5]),
         ]
