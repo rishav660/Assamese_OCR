@@ -7,4 +7,3 @@ matplotlib
 tqdm
 editdistance
 requests
-symspellpy
