@@ -1,61 +1,90 @@
+
 import os
+from collections import Counter
 import re
-from symspellpy import SymSpell, Verbosity
 
-class AssameseSpellChecker:
+class SpellChecker:
     def __init__(self, corpus_path):
-        # max_dictionary_edit_distance=2 allows 2 edits (very slow in Norvig, fast in SymSpell)
-        # prefix_length=7 is optimal for performance
-        self.sym_spell = SymSpell(max_dictionary_edit_distance=2, prefix_length=7)
-        self.corpus_path = corpus_path
-        self._build_and_load_dict()
+        self.words = Counter()
+        self.total_words = 0
+        self.load_corpus(corpus_path)
 
-    def _build_and_load_dict(self):
-        dict_path = self.corpus_path.replace('.txt', '_symspell.txt')
-        
-        # If the compiled dictionary doesn't exist, we must build it from the corpus
-        if not os.path.exists(dict_path):
-            print(f"Building SymSpell dictionary from {self.corpus_path}...")
-            # symspellpy natively supports creating a dictionary from a corpus file
-            self.sym_spell.create_dictionary(self.corpus_path, "utf-8")
-            self.sym_spell.save_pickle(dict_path)
-            print(f"Saved compiled dictionary to {dict_path}")
-        else:
-            print(f"Loading existing SymSpell dictionary from {dict_path}...")
-            self.sym_spell.load_pickle(dict_path)
-            print(f"Loaded dictionary with {len(self.sym_spell.words)} words.")
+    def load_corpus(self, path):
+        print(f"Loading corpus from {path}...")
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                text = f.read()
+                # Simple tokenization: split by whitespace and strip punctuation
+                # Assamese specific: Keep characters, numbers, and common punctuation if needed
+                # For now, let's just split by whitespace and strip common non-word chars
+                tokens = text.split()
+                cleaned_tokens = [self.clean_word(t) for t in tokens]
+                self.words.update([t for t in cleaned_tokens if t])
+                self.total_words = sum(self.words.values())
+            print(f"Loaded {len(self.words)} unique words.")
+        except Exception as e:
+            print(f"Error loading corpus: {e}")
 
-    def correct(self, word):
-        # 1. Skip very short words or non-Assamese words
-        if len(word) < 2 or not re.search(r'[\u0980-\u09FF]', word):
-            return word
+    def clean_word(self, word):
+        # Remove common punctuation from ends
+        return word.strip('.,!?।"\'()[]{}')
 
-        # 2. Get suggestions (Verbosity.CLOSEST returns the best matches)
-        suggestions = self.sym_spell.lookup(
-            word, 
-            Verbosity.CLOSEST, 
-            max_edit_distance=2, 
-            include_unknown=True
-        )
+    def P(self, word):
+        "Probability of `word`."
+        return self.words[word] / self.total_words
 
-        if not suggestions:
-            return word
-
-        best_suggestion = suggestions[0]
-
-        # 3. Confidence Gating
-        # Don't "correct" if the edit distance is large compared to word length,
-        # or if the original word is actually in the dictionary (distance 0).
-        if best_suggestion.distance == 0:
+    def correction(self, word):
+        "Most probable spelling correction for word."
+        # If word is known, return it
+        if word in self.words:
             return word
         
-        # If it requires 2 edits for a 3-letter word, it's likely destroying the word.
-        if best_suggestion.distance >= 2 and len(word) <= 4:
+        # Get candidates
+        candidates = self.candidates(word)
+        
+        # If no candidates, return original word
+        if not candidates:
             return word
             
-        # Return the corrected term
-        return best_suggestion.term
+        # Return candidate with highest probability
+        return max(candidates, key=self.P)
 
+    def candidates(self, word):
+        "Generate possible spelling corrections for word."
+        # 1. Known word (already checked in correction, but good for logic)
+        if word in self.words:
+            return {word}
+            
+        # 2. Edit distance 1
+        ed1 = self.known(self.edits1(word))
+        if ed1:
+            return ed1
+            
+        # 3. Edit distance 2 (only if word is short enough to justify cost, or just skip for speed)
+        # For now, let's stick to edits1 for performance, or a very restricted edits2
+        # ed2 = self.known(self.edits2(word))
+        # if ed2:
+        #    return ed2
+        
+        return {word}
+
+    def known(self, words):
+        "The subset of `words` that appear in the dictionary of words."
+        return set(w for w in words if w in self.words)
+
+    def edits1(self, word):
+        "All edits that are one edit away from `word`."
+        letters    = 'অআইঈউঊঋএঐওঔকখগঘঙচছজঝঞটঠডঢণতথদধনপফবভমযৰলৱশষসহক্ষড়ঢ়য়ৎংঃঁািীুূৃেৈোৌ্' # Assamese characters
+        splits     = [(word[:i], word[i:])    for i in range(len(word) + 1)]
+        deletes    = [L + R[1:]               for L, R in splits if R]
+        transposes = [L + R[1] + R[0] + R[2:] for L, R in splits if len(R)>1]
+        replaces   = [L + c + R[1:]           for L, R in splits if R for c in letters]
+        inserts    = [L + c + R               for L, R in splits for c in letters]
+        return set(deletes + transposes + replaces + inserts)
+
+    def edits2(self, word): 
+        "All edits that are two edits away from `word`."
+        return (e2 for e1 in self.edits1(word) for e2 in self.edits1(e1))
 
 # Singleton instance
 _spell_checker = None
@@ -65,17 +94,10 @@ def get_spell_checker():
     if _spell_checker is None:
         corpus_path = os.path.join(os.path.dirname(__file__), 'data', 'as-wiki-2021.txt')
         if os.path.exists(corpus_path):
-            try:
-                import symspellpy
-                _spell_checker = AssameseSpellChecker(corpus_path)
-            except ImportError:
-                print("[WARNING] symspellpy not installed! Run: pip install symspellpy")
-                print("Spell checking disabled.")
-                return None
+            _spell_checker = SpellChecker(corpus_path)
         else:
             print("Corpus not found, spell checker disabled.")
     return _spell_checker
-
 
 def correct_sentence(sentence):
     checker = get_spell_checker()
@@ -84,7 +106,6 @@ def correct_sentence(sentence):
         
     words = sentence.split()
     corrected_words = []
-    
     for w in words:
         # Keep punctuation attached
         prefix = ""
@@ -100,7 +121,7 @@ def correct_sentence(sentence):
             clean = clean[:-1]
             
         if clean:
-            corrected = checker.correct(clean)
+            corrected = checker.correction(clean)
             corrected_words.append(prefix + corrected + suffix)
         else:
             corrected_words.append(w)
